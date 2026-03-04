@@ -993,7 +993,8 @@ function HomeContent() {
 
     // Try pre-computed snapshot first
     try {
-      const snapshotUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/city-data/snapshot.json${cacheBust}`;
+      const v = Math.floor(Date.now() / 300_000);
+      const snapshotUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/city-data/snapshot.json?v=${v}${cacheBust ? `&_t=${Date.now()}` : ""}`;
       const snapshotRes = await fetch(snapshotUrl);
       if (snapshotRes.ok) {
         const snapshot = await snapshotRes.json();
@@ -1106,7 +1107,8 @@ function HomeContent() {
 
         // Try pre-computed snapshot first (single file from Supabase CDN)
         try {
-          const snapshotUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/city-data/snapshot.json`;
+          const v = Math.floor(Date.now() / 300_000); // changes every 5 min, aligned with cron
+          const snapshotUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/city-data/snapshot.json?v=${v}`;
           const snapshotRes = await fetch(snapshotUrl);
           if (snapshotRes.ok) {
             const snapshot = await snapshotRes.json();

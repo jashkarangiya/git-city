@@ -43,7 +43,8 @@ function WallpaperInner() {
 
     // Try pre-computed snapshot first
     try {
-      const snapshotUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/city-data/snapshot.json`;
+      const v = Math.floor(Date.now() / 300_000);
+      const snapshotUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/city-data/snapshot.json?v=${v}`;
       const snapshotRes = await fetch(snapshotUrl);
       if (snapshotRes.ok) {
         const snapshot = await snapshotRes.json();
