@@ -552,15 +552,16 @@ const _idealLook = new THREE.Vector3();
 const _blendedPos = new THREE.Vector3();
 const _yAxis = new THREE.Vector3(0, 1, 0);
 
-function AirplaneFlight({ onExit, onHud, onPause, pauseSignal = 0, hasOverlay = false, vehicleType = "airplane", posRef }: { onExit: () => void; onHud: (s: number, a: number, x: number, z: number, yaw: number) => void; onPause: (paused: boolean) => void; pauseSignal?: number; hasOverlay?: boolean; vehicleType?: string; posRef?: React.MutableRefObject<THREE.Vector3> }) {
+function AirplaneFlight({ onExit, onHud, onPause, pauseSignal = 0, hasOverlay = false, startPaused = false, vehicleType = "airplane", posRef }: { onExit: () => void; onHud: (s: number, a: number, x: number, z: number, yaw: number) => void; onPause: (paused: boolean) => void; pauseSignal?: number; hasOverlay?: boolean; startPaused?: boolean; vehicleType?: string; posRef?: React.MutableRefObject<THREE.Vector3> }) {
   const { camera } = useThree();
   const ref = useRef<THREE.Group>(null);
   const orbitRef = useRef<any>(null);
 
   const mouse = useRef({ x: 0, y: 0 });
   const keys = useRef<Record<string, boolean>>({});
-  const [isPaused, setIsPaused] = useState(false);
-  const paused = useRef(false);
+  const [isPaused, setIsPaused] = useState(startPaused);
+  const paused = useRef(startPaused);
+  const isFirstResume = useRef(startPaused); // skip transition on first resume from startPaused
 
   // Flight state
   const yaw = useRef(0);
@@ -611,7 +612,8 @@ function AirplaneFlight({ onExit, onHud, onPause, pauseSignal = 0, hasOverlay = 
 
     camera.position.copy(camPos.current);
     camera.lookAt(camLook.current);
-  }, [camera]);
+    if (startPaused) onPause(true);
+  }, [camera]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Mouse tracking for flight steering
   useEffect(() => {
@@ -663,10 +665,17 @@ function AirplaneFlight({ onExit, onHud, onPause, pauseSignal = 0, hasOverlay = 
       if (!paused.current) return;
       paused.current = false;
       setIsPaused(false);
-      wasJustUnpaused.current = true;
-      transitionProgress.current = 0;
-      transitionFrom.current.copy(camera.position);
-      transitionLookFrom.current.copy(camLook.current);
+      // Skip camera transition on first resume from startPaused — camera is already behind the plane
+      if (isFirstResume.current) {
+        isFirstResume.current = false;
+        transitionProgress.current = 1;
+        wasJustUnpaused.current = false;
+      } else {
+        wasJustUnpaused.current = true;
+        transitionProgress.current = 0;
+        transitionFrom.current.copy(camera.position);
+        transitionLookFrom.current.copy(camLook.current);
+      }
       onPause(false);
     };
 
@@ -1864,6 +1873,7 @@ interface Props {
   onFocusInfo?: (info: FocusInfo) => void;
   flyPauseSignal?: number;
   flyHasOverlay?: boolean;
+  flyStartPaused?: boolean;
   skyAds?: SkyAd[];
   onAdClick?: (ad: SkyAd) => void;
   onAdViewed?: (adId: string) => void;
@@ -1890,7 +1900,7 @@ interface Props {
 // Plaza indices for rabbit sightings (progressively further from center)
 const RABBIT_PLAZA_INDICES = [1, 2, 4, 7, 10]; // plazas[1]=slot3, [2]=slot7, [4]=slot18, [7]=slot42, [10]=slot75
 
-export default function CityCanvas({ buildings, plazas, decorations, river, bridges, flyMode, flyVehicle, onExitFly, onCollect, themeIndex, onHud, onPause, focusedBuilding, focusedBuildingB, accentColor, onClearFocus, onBuildingClick, onFocusInfo, flyPauseSignal, flyHasOverlay, skyAds, onAdClick, onAdViewed, introMode, onIntroEnd, raidPhase, raidData, raidAttacker, raidDefender, onRaidPhaseComplete, onLandmarkClick, rabbitSighting, onRabbitCaught, rabbitCinematic, onRabbitCinematicEnd, rabbitCinematicTarget, ghostPreviewLogin, holdRise, celebrationActive, wallpaperMode, wallpaperSpeed }: Props) {
+export default function CityCanvas({ buildings, plazas, decorations, river, bridges, flyMode, flyVehicle, onExitFly, onCollect, themeIndex, onHud, onPause, focusedBuilding, focusedBuildingB, accentColor, onClearFocus, onBuildingClick, onFocusInfo, flyPauseSignal, flyHasOverlay, flyStartPaused, skyAds, onAdClick, onAdViewed, introMode, onIntroEnd, raidPhase, raidData, raidAttacker, raidDefender, onRaidPhaseComplete, onLandmarkClick, rabbitSighting, onRabbitCaught, rabbitCinematic, onRabbitCinematicEnd, rabbitCinematicTarget, ghostPreviewLogin, holdRise, celebrationActive, wallpaperMode, wallpaperSpeed }: Props) {
   const t = THEMES[themeIndex] ?? THEMES[0];
   const showPerf = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("perf");
   const [dpr, setDpr] = useState(1);
@@ -1957,7 +1967,7 @@ export default function CityCanvas({ buildings, plazas, decorations, river, brid
 
           {!introMode && flyMode && (
             <>
-              <AirplaneFlight onExit={onExitFly} onHud={onHud ?? (() => {})} onPause={onPause ?? (() => {})} pauseSignal={flyPauseSignal} hasOverlay={flyHasOverlay} vehicleType={flyVehicle} posRef={flyPosRef} />
+              <AirplaneFlight onExit={onExitFly} onHud={onHud ?? (() => {})} onPause={onPause ?? (() => {})} pauseSignal={flyPauseSignal} hasOverlay={flyHasOverlay} startPaused={flyStartPaused} vehicleType={flyVehicle} posRef={flyPosRef} />
               <SkyCollectibles playerPosRef={flyPosRef} accentColor={accentColor ?? "#6090e0"} onCollect={onCollect ?? (() => {})} cityRadius={cityRadius} />
             </>
           )}

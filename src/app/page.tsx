@@ -469,6 +469,19 @@ function HomeContent() {
   const [welcomeCtaVisible, setWelcomeCtaVisible] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
+  // Fly onboarding
+  const [showDailyNudge, setShowDailyNudge] = useState(false);
+  const [showFlyHint, setShowFlyHint] = useState(false);
+  const [showFlyControls, setShowFlyControls] = useState(false);
+  const [showFlyResults, setShowFlyResults] = useState<{
+    score: number; collected: number; maxCombo: number; timeBonus: number;
+    isNewPB: boolean; rank: number; totalPilots: number;
+  } | null>(null);
+  const dailyNudgeTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const flyHintTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const flyControlsTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const flyResultsTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
   // A8: Ghost preview for own building
   const ghostPreviewShownRef = useRef(false);
   const [ghostPreviewLogin, setGhostPreviewLogin] = useState<string | null>(null);
@@ -600,6 +613,14 @@ function HomeContent() {
     }, 1000);
     return () => clearInterval(id);
   }, [flyMode, flyPaused]);
+
+  // Dismiss fly onboarding overlays when entering fly mode
+  useEffect(() => {
+    if (flyMode) {
+      setShowDailyNudge(false); setShowFlyHint(false); setShowFlyResults(null);
+      clearTimeout(dailyNudgeTimerRef.current); clearTimeout(flyHintTimerRef.current); clearTimeout(flyResultsTimerRef.current);
+    }
+  }, [flyMode]);
 
   // Fetch fly vehicle from raid loadout (on login)
   const sessionUserId = session?.user?.id;
@@ -1544,6 +1565,49 @@ if (claimingGift) return;
       .catch(() => {});
   }, [stats.total_developers, milestoneCelebrations]);
 
+  // Feature 1: Daily Challenge Nudge — show after load if user has history but hasn't played today
+  useEffect(() => {
+    if (loadStage !== "done" || isMobile || !session || flyMode || introMode) return;
+    dailyNudgeTimerRef.current = setTimeout(() => {
+      try {
+        const raw = localStorage.getItem("gitcity_fly_history");
+        if (!raw) return; // no history — first-fly hint handles this
+        const hist = JSON.parse(raw);
+        if (!hist.seeds || Object.keys(hist.seeds).length === 0) return;
+        const now = new Date();
+        const start = new Date(now.getFullYear(), 0, 0);
+        const dayOfYear = Math.floor((now.getTime() - start.getTime()) / 86400000);
+        const currentSeed = `${now.getFullYear()}-${dayOfYear}`;
+        if (hist.seeds[currentSeed]) return; // already played today
+        setShowDailyNudge(true);
+        // Auto-dismiss after 15s
+        const autoDismiss = setTimeout(() => setShowDailyNudge(false), 15000);
+        dailyNudgeTimerRef.current = autoDismiss;
+      } catch {}
+    }, 2000);
+    return () => clearTimeout(dailyNudgeTimerRef.current);
+  }, [loadStage, isMobile, session, flyMode, introMode]);
+
+  // Feature 2: First-Fly Tooltip — show if user has never flown
+  useEffect(() => {
+    if (loadStage !== "done" || isMobile || flyMode || introMode) return;
+    try {
+      if (localStorage.getItem("gitcity_fly_history") || localStorage.getItem("gitcity_fly_hint_seen")) return;
+    } catch { return; }
+    flyHintTimerRef.current = setTimeout(() => {
+      setShowFlyHint(true);
+      // Auto-dismiss after 10s
+      const autoDismiss = setTimeout(() => {
+        setShowFlyHint(false);
+        try { localStorage.setItem("gitcity_fly_hint_seen", "1"); } catch {}
+      }, 10000);
+      flyHintTimerRef.current = autoDismiss;
+    }, 5000);
+    return () => clearTimeout(flyHintTimerRef.current);
+  }, [loadStage, isMobile, flyMode, introMode]);
+
+  // Feature 3: First-Flight Controls Overlay — user-dismissed only (no auto-dismiss)
+
   return (
     <main className="relative min-h-screen overflow-hidden bg-bg font-pixel uppercase text-warm">
       {/* 3D Canvas */}
@@ -1560,21 +1624,19 @@ if (claimingGift) return;
           // Exclude pause time from flight duration
           const currentPauseMs = flyPausedAt.current > 0 ? Date.now() - flyPausedAt.current : 0;
           const flightMs = Math.max(0, wallMs - flyTotalPauseMs.current - currentPauseMs);
-          // Time bonus: each 3s under 90s = +1 point (max ~30 pts, rewards efficiency)
+          // Time bonus: % of base score scaled by how fast you finished (max +50% of base score)
+          // Rewards efficiency without letting quick-quits dominate
           const FLY_TIME_LIMIT = 90;
-          const timeBonus = flyScore.collected > 0 ? Math.max(0, Math.floor((FLY_TIME_LIMIT - flightMs / 1000) / 3)) : 0;
+          const timeFraction = flyScore.collected > 0 ? Math.max(0, (FLY_TIME_LIMIT - flightMs / 1000) / FLY_TIME_LIMIT) : 0;
+          const timeBonus = Math.floor(flyScore.score * 0.5 * timeFraction);
           const finalScore = flyScore.score + timeBonus;
-          // Submit score if logged in and scored
-          if (session && finalScore > 0) {
-            const maxComboVal = Math.min(Math.max(flyScore.maxCombo, 1), 3);
-            fetch("/api/fly-scores", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ score: finalScore, collected: flyScore.collected, max_combo: maxComboVal, flight_ms: flightMs }),
-            }).catch(() => {});
-          }
+          // Read current PB fresh from localStorage (React state may be stale)
+          let currentPB = flyPersonalBest;
+          try { currentPB = Math.max(currentPB, parseInt(localStorage.getItem("gitcity_fly_pb") || "0", 10) || 0); } catch {}
+          // Only show "New PB!" if there WAS a previous best to beat (not on first-ever flight)
+          const isNewPB = currentPB > 0 && finalScore > currentPB;
           // Update personal best
-          if (finalScore > flyPersonalBest) {
+          if (isNewPB) {
             setFlyPersonalBest(finalScore);
             try { localStorage.setItem("gitcity_fly_pb", String(finalScore)); } catch {}
           }
@@ -1594,7 +1656,6 @@ if (claimingGift) return;
               };
               // Recalculate streak
               if (hist.lastPlayedSeed !== currentSeed) {
-                // Check if lastPlayedSeed was yesterday
                 const yesterdayDay = dayOfYear - 1;
                 const yesterdaySeed = yesterdayDay >= 1 ? `${now.getFullYear()}-${yesterdayDay}` : `${now.getFullYear() - 1}-365`;
                 if (hist.lastPlayedSeed === yesterdaySeed) {
@@ -1610,7 +1671,31 @@ if (claimingGift) return;
               localStorage.setItem("gitcity_fly_history", JSON.stringify(hist));
             } catch {}
           }
+          // Exit fly immediately (don't block on API)
           setFlyMode(false); setFlyPaused(false); lastDistrictRef.current = null; setDistrictAnnouncement(null); clearTimeout(announceTimerRef.current);
+          // Feature 4: Show post-flight results (rank fills in async)
+          if (finalScore > 0) {
+            const captured = { score: finalScore, collected: flyScore.collected, maxCombo: flyScore.maxCombo, timeBonus, isNewPB };
+            // Show immediately with rank=0, then update when POST returns
+            setShowFlyResults({ ...captured, rank: 0, totalPilots: 0 });
+            flyResultsTimerRef.current = setTimeout(() => setShowFlyResults(null), 12000);
+            // Fire POST in background, update rank when it returns
+            if (session) {
+              const maxComboVal = Math.min(Math.max(flyScore.maxCombo, 1), 3);
+              fetch("/api/fly-scores", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ score: finalScore, collected: flyScore.collected, max_combo: maxComboVal, flight_ms: flightMs }),
+              })
+                .then((res) => res.ok ? res.json() : null)
+                .then((data) => {
+                  if (data) {
+                    setShowFlyResults((prev) => prev ? { ...prev, rank: data.rank_today ?? 0, totalPilots: data.total ?? 0 } : null);
+                  }
+                })
+                .catch(() => {});
+            }
+          }
         }}
         themeIndex={themeIndex}
         onHud={(s, a, x, z, yaw) => {
@@ -1658,6 +1743,7 @@ if (claimingGift) return;
         onClearFocus={() => setFocusedBuilding(null)}
         flyPauseSignal={flyPauseSignal}
         flyHasOverlay={!!selectedBuilding}
+        flyStartPaused={showFlyControls}
         holdRise={loadStage !== "done"}
         celebrationActive={celebrationActive}
         skyAds={skyAds}
@@ -1985,6 +2071,48 @@ if (claimingGift) return;
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ─── Feature 3: First-Flight Controls Overlay ─── */}
+      {showFlyControls && flyMode && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-bg/50 backdrop-blur-[2px]">
+          <div
+            className="border-[3px] border-border bg-bg-raised px-8 py-6 text-center animate-[fade-in_0.3s_ease-out]"
+            style={{ borderColor: theme.accent + "60" }}
+          >
+            <p className="mb-4 text-xs tracking-widest text-muted">FLIGHT CONTROLS</p>
+            <div className="flex flex-col gap-2.5 text-[11px]">
+              <div className="flex items-center justify-between gap-6">
+                <span className="text-cream">Mouse</span>
+                <span className="text-muted">Steer</span>
+              </div>
+              <div className="flex items-center justify-between gap-6">
+                <span className="text-cream">Scroll</span>
+                <span className="text-muted">Speed</span>
+              </div>
+              <div className="flex items-center justify-between gap-6">
+                <span className="text-cream">Shift / Alt</span>
+                <span className="text-muted">Boost / Slow</span>
+              </div>
+              <div className="flex items-center justify-between gap-6">
+                <span style={{ color: theme.accent }}>ESC</span>
+                <span className="text-muted">Pause &amp; Exit</span>
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                setShowFlyControls(false);
+                try { localStorage.setItem("gitcity_fly_controls_seen", "1"); } catch {}
+                // Resume the paused flight by dispatching Space keydown
+                window.dispatchEvent(new KeyboardEvent("keydown", { code: "Space", bubbles: true }));
+              }}
+              className="btn-press mt-5 px-6 py-2 text-[10px] text-bg"
+              style={{ backgroundColor: theme.accent, boxShadow: `3px 3px 0 0 ${theme.shadow}` }}
+            >
+              Got it, let&apos;s fly!
+            </button>
           </div>
         </div>
       )}
@@ -2338,8 +2466,79 @@ if (claimingGift) return;
                   Explore City
                 </button>
                 {!isMobile && (
+                  <div className="relative">
+                    <button
+                      onClick={() => {
+                        setFocusedBuilding(null);
+                        setFlyMode(true);
+                        setFlyScore({ score: 0, earned: 0, combo: 0, collected: 0, maxCombo: 1 });
+                        flyStartTime.current = Date.now();
+                        flyPausedAt.current = 0;
+                        flyTotalPauseMs.current = 0;
+                        setFlyElapsedSec(0);
+                        try { setFlyPersonalBest(parseInt(localStorage.getItem("gitcity_fly_pb") || "0", 10) || 0); } catch { setFlyPersonalBest(0); }
+                        // Feature 3: show controls overlay on first flight
+                        if (!localStorage.getItem("gitcity_fly_controls_seen")) {
+                          setShowFlyControls(true);
+                        }
+                      }}
+                      className="btn-press px-7 py-3 text-xs sm:py-3.5 sm:text-sm text-bg"
+                      style={{
+                        backgroundColor: theme.accent,
+                        boxShadow: `4px 4px 0 0 ${theme.shadow}`,
+                      }}
+                    >
+                      <span className="relative">
+                        &#9992; Fly
+                        <span
+                          className="absolute -top-3 -right-8 animate-pulse rounded-sm px-1 py-px text-[7px] font-bold leading-none text-bg"
+                          style={{ backgroundColor: theme.accent }}
+                        >
+                          NEW
+                        </span>
+                      </span>
+                      <span className="block text-[8px] opacity-60 normal-case">Collect PX</span>
+                    </button>
+                    {/* Feature 2: First-Fly Tooltip */}
+                    {showFlyHint && (
+                      <div className="absolute bottom-full left-1/2 z-30 mb-3 -translate-x-1/2 animate-[fade-in_0.3s_ease-out]">
+                        <div
+                          className="relative w-64 border-[2px] border-border bg-bg-raised px-4 py-3 text-center backdrop-blur-sm"
+                          style={{ borderColor: theme.accent + "60" }}
+                        >
+                          <p className="text-[10px] leading-relaxed text-cream normal-case">
+                            Fly over your city. Collect coins. Compete on the daily leaderboard.
+                          </p>
+                          <button
+                            onClick={() => {
+                              setShowFlyHint(false);
+                              clearTimeout(flyHintTimerRef.current);
+                              try { localStorage.setItem("gitcity_fly_hint_seen", "1"); } catch {}
+                            }}
+                            className="mt-2 px-3 py-1 text-[9px] text-bg"
+                            style={{ backgroundColor: theme.accent }}
+                          >
+                            Got it
+                          </button>
+                          {/* Downward arrow */}
+                          <div
+                            className="absolute top-full left-1/2 -translate-x-1/2 border-x-[6px] border-t-[6px] border-x-transparent"
+                            style={{ borderTopColor: theme.accent + "60" }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Feature 1: Daily Challenge Nudge */}
+              {showDailyNudge && (
+                <div className="animate-[slide-up_0.3s_ease-out] flex items-center gap-2">
                   <button
                     onClick={() => {
+                      setShowDailyNudge(false);
+                      clearTimeout(dailyNudgeTimerRef.current);
                       setFocusedBuilding(null);
                       setFlyMode(true);
                       setFlyScore({ score: 0, earned: 0, combo: 0, collected: 0, maxCombo: 1 });
@@ -2348,26 +2547,24 @@ if (claimingGift) return;
                       flyTotalPauseMs.current = 0;
                       setFlyElapsedSec(0);
                       try { setFlyPersonalBest(parseInt(localStorage.getItem("gitcity_fly_pb") || "0", 10) || 0); } catch { setFlyPersonalBest(0); }
+                      if (!localStorage.getItem("gitcity_fly_controls_seen")) {
+                        setShowFlyControls(true);
+                      }
                     }}
-                    className="btn-press px-7 py-3 text-xs sm:py-3.5 sm:text-sm text-bg"
-                    style={{
-                      backgroundColor: theme.accent,
-                      boxShadow: `4px 4px 0 0 ${theme.shadow}`,
-                    }}
+                    className="btn-press flex items-center gap-2 border-[2px] bg-bg/80 px-4 py-1.5 text-[10px] backdrop-blur-sm transition-colors hover:border-border-light"
+                    style={{ borderColor: theme.accent + "60", color: theme.accent }}
                   >
-                    <span className="relative">
-                      &#9992; Fly
-                      <span
-                        className="absolute -top-3 -right-8 animate-pulse rounded-sm px-1 py-px text-[7px] font-bold leading-none text-bg"
-                        style={{ backgroundColor: theme.accent }}
-                      >
-                        NEW
-                      </span>
-                    </span>
-                    <span className="block text-[8px] opacity-60 normal-case">Collect PX</span>
+                    <span className="normal-case">Today&apos;s challenge is live</span>
+                    <span>Play &#8594;</span>
                   </button>
-                )}
-              </div>
+                  <button
+                    onClick={() => { setShowDailyNudge(false); clearTimeout(dailyNudgeTimerRef.current); }}
+                    className="text-[10px] text-muted transition-colors hover:text-cream"
+                  >
+                    &#10005;
+                  </button>
+                </div>
+              )}
 
               {/* Nav links */}
               <div className="flex items-center justify-center gap-2">
@@ -3579,6 +3776,112 @@ if (claimingGift) return;
           }
         }}
       />
+
+      {/* ─── Feature 4: Post-Flight Results Modal ─── */}
+      {showFlyResults && !flyMode && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 bg-bg/70 backdrop-blur-sm"
+            onClick={() => { setShowFlyResults(null); clearTimeout(flyResultsTimerRef.current); }}
+          />
+          {/* Modal */}
+          <div
+            className="relative mx-3 border-[3px] border-border bg-bg-raised p-5 text-center sm:mx-0 sm:p-7 animate-[gift-bounce_0.5s_ease-out]"
+            style={{ borderColor: theme.accent + "60", minWidth: 280 }}
+          >
+            {/* Close */}
+            <button
+              onClick={() => { setShowFlyResults(null); clearTimeout(flyResultsTimerRef.current); }}
+              className="absolute top-2 right-3 text-[10px] text-muted transition-colors hover:text-cream"
+            >
+              ESC
+            </button>
+
+            <p className="text-[9px] tracking-widest text-muted mb-1">FLIGHT COMPLETE</p>
+
+            {/* Score */}
+            <div className="text-3xl sm:text-4xl font-bold" style={{ color: theme.accent }}>
+              {showFlyResults.score}
+            </div>
+            <p className="text-[9px] text-muted mt-0.5">points</p>
+
+            {/* New PB badge */}
+            {showFlyResults.isNewPB && (
+              <div
+                className="mt-2 inline-block rounded-sm px-2.5 py-0.5 text-[9px] font-bold text-bg animate-pulse"
+                style={{ backgroundColor: theme.accent }}
+              >
+                NEW PERSONAL BEST!
+              </div>
+            )}
+
+            {/* Stats grid */}
+            <div className="mt-4 grid grid-cols-3 gap-3 text-center">
+              <div>
+                <div className="text-sm font-bold text-cream">{showFlyResults.collected}</div>
+                <div className="text-[8px] text-muted">Collected</div>
+              </div>
+              <div>
+                <div className="text-sm font-bold text-cream">{showFlyResults.maxCombo}x</div>
+                <div className="text-[8px] text-muted">Max Combo</div>
+              </div>
+              <div>
+                <div className="text-sm font-bold text-cream">+{showFlyResults.timeBonus}</div>
+                <div className="text-[8px] text-muted">Time Bonus</div>
+              </div>
+            </div>
+
+            {/* Rank */}
+            {showFlyResults.rank > 0 && (
+              <div className="mt-3 border-t border-border/40 pt-3">
+                <span className="text-[9px] text-muted">Rank </span>
+                <span className="text-sm font-bold" style={{ color: theme.accent }}>
+                  #{showFlyResults.rank}
+                </span>
+                {showFlyResults.totalPilots > 0 && (
+                  <span className="text-[9px] text-muted"> of {showFlyResults.totalPilots}</span>
+                )}
+              </div>
+            )}
+
+            {/* CTAs */}
+            <div className="mt-4 flex flex-col items-center gap-2 sm:flex-row sm:justify-center sm:gap-3">
+              <button
+                onClick={() => {
+                  setShowFlyResults(null); clearTimeout(flyResultsTimerRef.current);
+                  setFocusedBuilding(null);
+                  setFlyMode(true);
+                  setFlyScore({ score: 0, earned: 0, combo: 0, collected: 0, maxCombo: 1 });
+                  flyStartTime.current = Date.now();
+                  flyPausedAt.current = 0;
+                  flyTotalPauseMs.current = 0;
+                  setFlyElapsedSec(0);
+                  try { setFlyPersonalBest(parseInt(localStorage.getItem("gitcity_fly_pb") || "0", 10) || 0); } catch { setFlyPersonalBest(0); }
+                }}
+                className="btn-press px-5 py-2 text-[10px] text-bg"
+                style={{ backgroundColor: theme.accent, boxShadow: `3px 3px 0 0 ${theme.shadow}` }}
+              >
+                Fly Again
+              </button>
+              <Link
+                href="/leaderboard?mode=game"
+                onClick={() => { setShowFlyResults(null); clearTimeout(flyResultsTimerRef.current); }}
+                className="btn-press border-[2px] border-border px-5 py-2 text-[10px] transition-colors hover:border-border-light"
+                style={{ color: theme.accent }}
+              >
+                See Leaderboard
+              </Link>
+              <button
+                onClick={() => { setShowFlyResults(null); clearTimeout(flyResultsTimerRef.current); }}
+                className="text-[9px] text-muted transition-colors hover:text-cream"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ─── Free Gift Celebration Modal ─── */}
       {giftClaimed && !flyMode && !exploreMode && (

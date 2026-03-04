@@ -309,6 +309,7 @@ export default function FlyLeaderboard() {
         <div className="flex items-center gap-4 border-b-[3px] border-border bg-bg-card px-5 py-3 text-xs text-muted">
           <span className="w-10 text-center">#</span>
           <span className="flex-1">Pilot</span>
+          <span className="hidden w-16 text-right sm:block">Time</span>
           <span className="hidden w-20 text-right sm:block">Collected</span>
           <span className="w-24 text-right">Score</span>
         </div>
@@ -364,6 +365,10 @@ export default function FlyLeaderboard() {
                     </p>
                   </div>
                 </div>
+
+                <span className="hidden w-16 text-right text-xs text-muted sm:block">
+                  {Math.floor(entry.flight_ms / 60000)}:{String(Math.floor((entry.flight_ms % 60000) / 1000)).padStart(2, "0")}
+                </span>
 
                 <span className="hidden w-20 text-right text-xs text-muted sm:block">
                   {entry.collected}/40

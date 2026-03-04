@@ -80,19 +80,33 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Failed to save" }, { status: 500 });
   }
 
-  // Compute rank: count distinct developers with any score higher today
-  // (if any of their scores > mine, their best is also > mine)
+  // Compute rank: count distinct developers who beat this score
+  // "Beat" = higher score, OR same score with faster time
   const { data: higherDevs } = await admin
     .from("fly_scores")
     .select("developer_id")
     .eq("seed", seed)
     .gt("score", score);
 
-  const uniqueHigher = new Set((higherDevs ?? []).map((r: any) => r.developer_id));
-  uniqueHigher.delete(dev.id); // don't count own previous higher scores
+  const { data: tiedFasterDevs } = await admin
+    .from("fly_scores")
+    .select("developer_id")
+    .eq("seed", seed)
+    .eq("score", score)
+    .lt("flight_ms", flight_ms);
+
+  const uniqueHigher = new Set([
+    ...(higherDevs ?? []).map((r: any) => r.developer_id),
+    ...(tiedFasterDevs ?? []).map((r: any) => r.developer_id),
+  ]);
+  uniqueHigher.delete(dev.id); // don't count own previous scores
   const rank_today = uniqueHigher.size + 1;
 
-  return NextResponse.json({ id: row.id, score, rank_today });
+  // Total unique pilots for this seed (for post-flight results)
+  const { data: allDevs } = await admin.from("fly_scores").select("developer_id").eq("seed", seed);
+  const total = new Set((allDevs ?? []).map((r: any) => r.developer_id)).size;
+
+  return NextResponse.json({ id: row.id, score, rank_today, total });
 }
 
 export async function GET(request: Request) {
@@ -108,6 +122,7 @@ export async function GET(request: Request) {
       .select("score, collected, max_combo, flight_ms, created_at, developer_id, developers!inner(github_login, avatar_url)")
       .eq("seed", seed)
       .order("score", { ascending: false })
+      .order("flight_ms", { ascending: true })
       .limit(200),
     admin
       .from("fly_scores")
