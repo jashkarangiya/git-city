@@ -9,6 +9,7 @@ import LeaderboardUserPosition from "@/components/LeaderboardUserPosition";
 import LeaderboardYouVsNext from "@/components/LeaderboardYouVsNext";
 import FlyLeaderboard from "@/components/FlyLeaderboard";
 import DailiesLeaderboard from "@/components/DailiesLeaderboard";
+import DropsLeaderboard from "@/components/DropsLeaderboard";
 import { rankFromLevel, tierFromLevel } from "@/lib/xp";
 
 export const revalidate = 300; // ISR: regenerate every 5 min
@@ -37,7 +38,7 @@ interface Developer {
 }
 
 type DevTabId = "contributors" | "stars" | "architects" | "achievers" | "recruiters" | "xp";
-type GameTabId = "flight" | "speedrun" | "dailies";
+type GameTabId = "flight" | "speedrun" | "dailies" | "drops";
 
 const DEV_TABS: { id: DevTabId; label: string }[] = [
   { id: "contributors", label: "Contributors" },
@@ -52,6 +53,7 @@ const GAME_TABS: { id: GameTabId; label: string }[] = [
   { id: "flight", label: "Flight" },
   { id: "speedrun", label: "Speedrun" },
   { id: "dailies", label: "Dailies" },
+  { id: "drops", label: "Drops" },
 ];
 
 const ACCENT = "#c8e64a";
@@ -256,7 +258,17 @@ export default async function LeaderboardPage({
               ))}
             </div>
 
-            {activeGameTab === "dailies" ? (
+            {activeGameTab === "drops" ? (
+              <Suspense
+                fallback={
+                  <div className="mt-10 text-center text-xs text-muted normal-case">
+                    Loading drops leaderboard...
+                  </div>
+                }
+              >
+                <DropsLeaderboard />
+              </Suspense>
+            ) : activeGameTab === "dailies" ? (
               <Suspense
                 fallback={
                   <div className="mt-10 text-center text-xs text-muted normal-case">

@@ -8,6 +8,7 @@ import InstancedBuildings from "./InstancedBuildings";
 import InstancedLabels from "./InstancedLabels";
 import EffectsLayer from "./EffectsLayer";
 import LiveDots from "./LiveDots";
+import DropBeacon from "./DropBeacon";
 import type { LiveSession } from "@/lib/useCodingPresence";
 import type { CityBuilding } from "@/lib/github";
 import type { BuildingColors } from "./CityCanvas";
@@ -221,6 +222,13 @@ export default function CityScene({
           />
         </group>
       )}
+
+      {/* Drop beacons: pillars of light on buildings with active drops */}
+      {!introMode && buildings.filter((b) => b.active_drop).map((b) => (
+        <group key={`drop-${b.login}`} position={[b.position[0], 0, b.position[2]]}>
+          <DropBeacon rarity={b.active_drop!.rarity} height={b.height} />
+        </group>
+      ))}
     </>
   );
 }
